@@ -4,6 +4,7 @@ sentence-transformers
 scikit-learn
 numpy
 ibm-watsonx-ai
-fitz
+pymupdf
+
 
 
