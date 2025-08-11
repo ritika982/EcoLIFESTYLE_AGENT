@@ -1,0 +1,8 @@
+streamlit
+pymupdf
+sentence-transformers
+scikit-learn
+numpy
+ibm-watsonx-ai
+
+
