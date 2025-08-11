@@ -1,10 +1,11 @@
 streamlit
-pymupdf
+pdfplumber
 sentence-transformers
 scikit-learn
 numpy
 ibm-watsonx-ai
-pymupdf==1.23.26
+
+
 
 
 
