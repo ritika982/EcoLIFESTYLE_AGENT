@@ -7,14 +7,25 @@ from sklearn.neighbors import NearestNeighbors
 from ibm_watsonx_ai.foundation_models import Model
 
 # -----------------------
-# PDF Reading
+# IBM watsonx.ai credentials
 # -----------------------
-def extract_text_from_pdf_bytes(file_bytes):
+API_KEY = "UZ2TVy83LurEvlPjJlXWXuYXU8L1ba5lTUafb2T4KKxG"  # replace with your API key
+PROJECT_ID = "cc79370a-2d49-4f0f-afc7-13f0c8749038"  # replace with your project id
+URL = "https://us-south.ml.cloud.ibm.com"  # replace with your service url
+
+# -----------------------
+# Load PDF automatically from repo
+# -----------------------
+PDF_PATH = os.path.join(os.path.dirname(__file__), "eco_tips.pdf")
+
+def extract_text_from_pdf(file_path):
     text = ""
-    with pdfplumber.open(file_bytes) as pdf:
+    with pdfplumber.open(file_path) as pdf:
         for page in pdf.pages:
             text += page.extract_text() or ""
     return text
+
+pdf_text = extract_text_from_pdf(PDF_PATH)
 
 def chunk_text(text, chunk_size=700, overlap=150):
     chunks = []
@@ -29,7 +40,7 @@ def chunk_text(text, chunk_size=700, overlap=150):
     return chunks
 
 # -----------------------
-# Embeddings
+# Embeddings & Search
 # -----------------------
 @st.cache_resource(show_spinner=False)
 def load_embed_model(model_name="all-MiniLM-L6-v2"):
@@ -84,75 +95,51 @@ def synthesize_with_watsonx(api_key, url, project_id, query, top_chunks):
 # -----------------------
 # Streamlit UI
 # -----------------------
-st.set_page_config(page_title="EcoLifestyle Agent — PDF Q&A", page_icon="🌱")
-st.title("🌱 EcoLifestyle Agent — PDF Q&A (IBM watsonx.ai)")
+st.set_page_config(page_title="EcoLifestyle Agent — Preloaded PDF", page_icon="🌱")
+st.title("🌱 EcoLifestyle Agent — Preloaded PDF")
 
-st.markdown("Upload your PDF and ask questions. The app retrieves relevant passages and uses IBM watsonx.ai to generate answers.")
+st.markdown("Ask questions about the eco lifestyle PDF stored in the app.")
 
-uploaded_file = st.file_uploader("Upload Project PDF", type=["pdf"])
-
+# Prepare chunks and embeddings only once
 if "chunks" not in st.session_state:
-    st.session_state.chunks = []
-if "embeddings" not in st.session_state:
-    st.session_state.embeddings = None
-if "index" not in st.session_state:
-    st.session_state.index = None
+    st.session_state.chunks = chunk_text(pdf_text)
+    st.success(f"Loaded {len(st.session_state.chunks)} chunks from PDF.")
+
 if "model" not in st.session_state:
-    st.session_state.model = None
+    with st.spinner("Loading embedding model..."):
+        st.session_state.model = load_embed_model()
 
-if uploaded_file is not None:
-    with st.spinner("Extracting text..."):
-        text = extract_text_from_pdf_bytes(uploaded_file)
+if "embeddings" not in st.session_state:
+    with st.spinner("Computing embeddings..."):
+        st.session_state.embeddings = embed_texts(st.session_state.model, st.session_state.chunks)
 
-    if not text.strip():
-        st.warning("No extractable text found in PDF.")
-    else:
-        if not st.session_state.chunks:
-            st.session_state.chunks = chunk_text(text)
-            st.success(f"Extracted {len(st.session_state.chunks)} chunks.")
+if "index" not in st.session_state:
+    with st.spinner("Building search index..."):
+        st.session_state.index = build_index(st.session_state.embeddings)
 
-        if st.session_state.model is None:
-            with st.spinner("Loading embedding model..."):
-                st.session_state.model = load_embed_model()
-
-        if st.session_state.embeddings is None:
-            with st.spinner("Computing embeddings..."):
-                st.session_state.embeddings = embed_texts(st.session_state.model, st.session_state.chunks)
-
-        if st.session_state.index is None:
-            with st.spinner("Building index..."):
-                st.session_state.index = build_index(st.session_state.embeddings)
-
-# 🔐 Get IBM watsonx.ai credentials from Streamlit Secrets
-api_key_input = os.getenv("API_KEY", st.secrets.get("API_KEY", ""))
-project_id_input = os.getenv("PROJECT_ID", st.secrets.get("PROJECT_ID", ""))
-url_input = os.getenv("URL", st.secrets.get("URL", ""))
-
+# Get question
 query = st.text_input("Ask a question about the PDF")
 top_k = st.slider("Top K passages", min_value=1, max_value=8, value=4)
 
 if st.button("Search & Answer") and query.strip():
-    if uploaded_file is None:
-        st.info("Please upload the PDF first.")
-    elif not api_key_input or not url_input or not project_id_input:
-        st.warning("IBM watsonx.ai credentials missing. Set them in Streamlit Secrets.")
-    else:
-        query_emb = embed_texts(st.session_state.model, [query])[0]
-        indices, distances = search_top_k(st.session_state.index, st.session_state.embeddings, query_emb, k=top_k)
+    query_emb = embed_texts(st.session_state.model, [query])[0]
+    indices, distances = search_top_k(st.session_state.index, st.session_state.embeddings, query_emb, k=top_k)
 
-        st.subheader("Retrieved Passages")
-        top_chunks = []
-        for rank, idx in enumerate(indices, start=1):
-            idx = int(idx)
-            chunk_text_display = st.session_state.chunks[idx]
-            top_chunks.append((idx, chunk_text_display))
-            st.markdown(f"**{rank}. Chunk {idx}** (score: {float(distances[rank-1]):.4f})")
-            st.write(chunk_text_display)
-            st.write("---")
+    st.subheader("Retrieved Passages")
+    top_chunks = []
+    for rank, idx in enumerate(indices, start=1):
+        idx = int(idx)
+        chunk_text_display = st.session_state.chunks[idx]
+        top_chunks.append((idx, chunk_text_display))
+        st.markdown(f"**{rank}. Chunk {idx}** (score: {float(distances[rank-1]):.4f})")
+        st.write(chunk_text_display)
+        st.write("---")
 
-        with st.spinner("Generating answer with IBM watsonx.ai..."):
-            answer = synthesize_with_watsonx(api_key_input, url_input, project_id_input, query, top_chunks)
-        st.subheader("Agent Answer")
-        st.write(answer)
+    with st.spinner("Generating answer with IBM watsonx.ai..."):
+        answer = synthesize_with_watsonx(API_KEY, URL, PROJECT_ID, query, top_chunks)
+    st.subheader("Agent Answer")
+    st.write(answer)
+
+
 
 
