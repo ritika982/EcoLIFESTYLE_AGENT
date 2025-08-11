@@ -4,7 +4,8 @@ sentence-transformers
 scikit-learn
 numpy
 ibm-watsonx-ai
-pymupdf
+pymupdf==1.23.26
+
 
 
 
